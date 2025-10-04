@@ -2,14 +2,13 @@ services:
   - type: web
     name: nasa-hdf-api
     env: python
-    runtime: python
     region: oregon
     plan: free
     branch: main
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.9
+        value: 3.11.0
       - key: HDF_DATA_DIR
         value: ./data/raw
