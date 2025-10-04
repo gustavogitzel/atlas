@@ -1,0 +1,27 @@
+# 🛰️ NASA HDF Processor - Dependências Python
+
+# Web Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.10.0
+pydantic-settings==2.6.0
+
+# Processamento Científico
+numpy==1.26.2
+scipy==1.11.4
+pandas==2.1.4
+
+# Processamento HDF Real (opcional - comentado para deploy mais rápido)
+# pyhdf==0.11.0
+# h5py==3.10.0
+# netCDF4==1.6.5
+
+# Utilitários
+requests==2.31.0
+python-dateutil==2.8.2
+
+# Desenvolvimento
+pytest==7.4.3
+pytest-cov==4.1.0
+black==23.12.1
+flake8==6.1.0
