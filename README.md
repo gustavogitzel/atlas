@@ -1,6 +1,6 @@
 # 🛰️ NASA HDF Processor API
 
-Sistema de processamento de dados HDF da NASA com **FastAPI** e **Arquitetura Hexagonal**.
+Sistema de processamento dos dados HDF da NASA com **FastAPI** e **Arquitetura Hexagonal**.
 
 [![Deploy](https://img.shields.io/badge/deploy-render-success)](https://render.com)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](https://python.org)
