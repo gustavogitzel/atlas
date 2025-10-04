@@ -8,7 +8,6 @@ pydantic-settings==2.6.0
 
 # Processamento Científico
 numpy==1.26.2
-scipy==1.11.4
 pandas==2.1.4
 
 # Processamento HDF Real (opcional - comentado para deploy mais rápido)
