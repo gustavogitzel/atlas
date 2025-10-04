@@ -24,18 +24,6 @@ instance/
 .DS_Store
 Thumbs.db
 
-# Dados HDF (arquivos grandes)
-*.hdf
-*.h5
-*.nc
-data/raw/*
-data/processed/*
-data/cache/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-!data/cache/.gitkeep
-downloads/
-
 # Logs
 *.log
 logs/
@@ -44,6 +32,8 @@ logs/
 .pytest_cache/
 .coverage
 htmlcov/
+
+frontend/
 
 # Ambiente
 .env
