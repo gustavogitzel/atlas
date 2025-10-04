@@ -6,11 +6,14 @@ Hexagonal Architecture + Async + Dependency Injection
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 import logging
 import os
 import numpy as np
+from functools import lru_cache
+import hashlib
+import json
 
 from src.domain.services import EnvironmentalAnalysisService, GameMissionService
 from src.domain.ports import HDFDataRepository, RegionRepository
@@ -46,6 +49,32 @@ geo_converter = HDFGeospatialConverter()
 # Initialize CSV fire repository
 csv_fire_repo = CSVFireRepository(data_dir=DATA_DIR)
 
+# Simple in-memory cache
+cache = {}
+CACHE_TTL = 300  # 5 minutes
+
+def get_cache_key(*args, **kwargs):
+    """Generate cache key from arguments"""
+    key_data = f"{args}{kwargs}"
+    return hashlib.md5(key_data.encode()).hexdigest()
+
+def get_cached(key):
+    """Get cached value if not expired"""
+    if key in cache:
+        data, timestamp = cache[key]
+        if datetime.now() - timestamp < timedelta(seconds=CACHE_TTL):
+            logger.info(f"✅ Cache HIT: {key[:8]}...")
+            return data
+        else:
+            logger.info(f"⏰ Cache EXPIRED: {key[:8]}...")
+            del cache[key]
+    return None
+
+def set_cache(key, value):
+    """Set cache value with timestamp"""
+    cache[key] = (value, datetime.now())
+    logger.info(f"💾 Cache SET: {key[:8]}...")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -76,30 +105,62 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
 # ============================================================================
 # 🎯 ENDPOINTS
 # ============================================================================
 
-@app.get("/", tags=["root"])
+@app.get("/", tags=["health"])
 async def root():
-    """Root endpoint"""
+    """API Health Check"""
     return {
-        "name": "NASA HDF Processor API",
+        "status": "online",
+        "message": "NASA HDF Processor API",
         "version": "2.0.0",
-        "architecture": "Hexagonal (Ports & Adapters)",
         "docs": "/docs",
         "health": "/health"
     }
 
+
+@app.get("/cache/clear", tags=["health"])
+async def clear_cache():
+    """Clear all cache"""
+    global cache
+    old_size = len(cache)
+    cache = {}
+    logger.info(f"🗑️ Cache cleared: {old_size} entries removed")
+    return {
+        "message": "Cache cleared",
+        "entries_removed": old_size
+    }
+
+@app.get("/cache/stats", tags=["health"])
+async def cache_stats():
+    """Get cache statistics"""
+    total_entries = len(cache)
+    expired = 0
+    valid = 0
+    
+    now = datetime.now()
+    for key, (data, timestamp) in cache.items():
+        if now - timestamp >= timedelta(seconds=CACHE_TTL):
+            expired += 1
+        else:
+            valid += 1
+    
+    return {
+        "total_entries": total_entries,
+        "valid_entries": valid,
+        "expired_entries": expired,
+        "ttl_seconds": CACHE_TTL
+    }
 
 @app.get("/health", tags=["health"])
 async def health_check():
     """Health check"""
     return {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "cache_size": len(cache)
     }
 
 
@@ -438,7 +499,7 @@ async def get_csv_fire_points(
     end_date: Optional[str] = None
 ):
     """
-    Get fire points from CSV for React Globe mapping
+    Get fire points from CSV for React Globe mapping (CACHED)
     
     Query params:
         - max_points: Maximum points to return (default: 5000)
@@ -449,41 +510,70 @@ async def get_csv_fire_points(
     Returns:
         GeoJSON FeatureCollection with fire detections
     """
+    # Generate cache key
+    cache_key = get_cache_key('fire_points', max_points, min_confidence, start_date, end_date)
+    
+    # Check cache
+    cached_data = get_cached(cache_key)
+    if cached_data:
+        return cached_data
+    
+    # Fetch data
     geojson = csv_fire_repo.get_fire_points_geojson(
         max_points=max_points,
         min_confidence=min_confidence,
         start_date=start_date,
         end_date=end_date
     )
+    
+    # Store in cache
+    set_cache(cache_key, geojson)
+    
     return geojson
 
 
 @app.get("/csv/statistics", tags=["csv-fire"])
 async def get_csv_statistics():
     """
-    Get overall statistics from CSV fire data
+    Get overall statistics from CSV fire data (CACHED)
     
     Returns interesting metrics for cards/dashboard
     """
+    cache_key = get_cache_key('statistics')
+    
+    cached_data = get_cached(cache_key)
+    if cached_data:
+        return cached_data
+    
     stats = csv_fire_repo.get_statistics()
+    set_cache(cache_key, stats)
+    
     return stats
 
 
 @app.get("/csv/temporal-analysis", tags=["csv-fire"])
 async def get_temporal_analysis():
     """
-    Get temporal analysis of fire detections
+    Get temporal analysis of fire detections (CACHED)
     
     Shows fire trends over time
     """
+    cache_key = get_cache_key('temporal')
+    
+    cached_data = get_cached(cache_key)
+    if cached_data:
+        return cached_data
+    
     analysis = csv_fire_repo.get_temporal_analysis()
+    set_cache(cache_key, analysis)
+    
     return analysis
 
 
 @app.get("/csv/hotspots", tags=["csv-fire"])
 async def get_hotspots(grid_size: float = 0.5):
     """
-    Get fire hotspot clusters
+    Get fire hotspot clusters (CACHED)
     
     Query params:
         - grid_size: Grid cell size in degrees (default: 0.5)
@@ -491,11 +581,20 @@ async def get_hotspots(grid_size: float = 0.5):
     Returns:
         List of hotspot clusters with intensity
     """
+    cache_key = get_cache_key('hotspots', grid_size)
+    
+    cached_data = get_cached(cache_key)
+    if cached_data:
+        return cached_data
+    
     hotspots = csv_fire_repo.get_hotspot_clusters(grid_size=grid_size)
-    return {
+    result = {
         "hotspots": hotspots,
         "count": len(hotspots)
     }
+    
+    set_cache(cache_key, result)
+    return result
 
 
 @app.get("/csv/fire-details", tags=["csv-fire"])

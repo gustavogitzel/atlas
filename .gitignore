@@ -33,7 +33,7 @@ logs/
 .coverage
 htmlcov/
 
-frontend/
+frontend
 
 # Ambiente
 .env
