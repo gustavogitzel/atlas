@@ -20,7 +20,7 @@ from src.domain.ports import HDFDataRepository, RegionRepository
 from src.adapters.repositories.hdf_real_repository import RealHDFRepository
 from src.adapters.repositories.region_repository import InMemoryRegionRepository
 from src.adapters.repositories.hdf_geospatial import HDFGeospatialConverter
-from src.adapters.repositories.csv_fire_repository import CSVFireRepository
+from src.adapters.repositories.firms_api_repository import FirmsAPIRepository
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -46,8 +46,8 @@ container = Container(data_dir=DATA_DIR)
 # Initialize geospatial converter
 geo_converter = HDFGeospatialConverter()
 
-# Initialize CSV fire repository
-csv_fire_repo = CSVFireRepository(data_dir=DATA_DIR)
+# Initialize FIRMS API repository
+firms_api_repo = None  # Will be initialized in lifespan
 
 # Simple in-memory cache
 cache = {}
@@ -79,10 +79,18 @@ def set_cache(key, value):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
+    global firms_api_repo
+    
     logger.info("🚀 Starting NASA HDF API (Hexagonal Architecture)...")
     logger.info(f"   📂 Data directory: {DATA_DIR}")
     logger.info("   ✅ Domain services initialized")
     logger.info("   ✅ Real HDF repository connected")
+    
+    # Initialize FIRMS API repository (lazy loading - data loaded on first request)
+    logger.info("🛰️ Initializing NASA FIRMS API repository...")
+    firms_api_repo = FirmsAPIRepository(cache_data=True, data_dir=DATA_DIR)
+    logger.info("✅ FIRMS API repository ready (data will be loaded on first request)")
+    
     yield
     logger.info("🛑 Shutting down NASA HDF API...")
 
@@ -519,7 +527,7 @@ async def get_csv_fire_points(
         return cached_data
     
     # Fetch data
-    geojson = csv_fire_repo.get_fire_points_geojson(
+    geojson = firms_api_repo.get_fire_points_geojson(
         max_points=max_points,
         min_confidence=min_confidence,
         start_date=start_date,
@@ -545,7 +553,7 @@ async def get_csv_statistics():
     if cached_data:
         return cached_data
     
-    stats = csv_fire_repo.get_statistics()
+    stats = firms_api_repo.get_statistics()
     set_cache(cache_key, stats)
     
     return stats
@@ -564,7 +572,7 @@ async def get_temporal_analysis():
     if cached_data:
         return cached_data
     
-    analysis = csv_fire_repo.get_temporal_analysis()
+    analysis = firms_api_repo.get_temporal_analysis()
     set_cache(cache_key, analysis)
     
     return analysis
@@ -587,7 +595,7 @@ async def get_hotspots(grid_size: float = 0.5):
     if cached_data:
         return cached_data
     
-    hotspots = csv_fire_repo.get_hotspot_clusters(grid_size=grid_size)
+    hotspots = firms_api_repo.get_hotspot_clusters(grid_size=grid_size)
     result = {
         "hotspots": hotspots,
         "count": len(hotspots)
@@ -610,13 +618,74 @@ async def get_fire_details(lat: float, lon: float, radius: float = 0.1):
     Returns:
         List of nearby fire detections with full details
     """
-    fires = csv_fire_repo.get_fire_details(lat, lon, radius)
+    fires = firms_api_repo.get_fire_details(lat, lon, radius)
     return {
         "fires": fires,
         "count": len(fires),
         "center": {"lat": lat, "lon": lon},
         "radius": radius
     }
+
+
+@app.get("/csv/data-status", tags=["csv-fire"])
+async def get_data_status():
+    """
+    Get status of loaded fire data
+    
+    Returns information about the current dataset
+    """
+    if firms_api_repo is None or firms_api_repo.df is None or firms_api_repo.df.empty:
+        return {
+            "status": "no_data",
+            "message": "No fire data loaded"
+        }
+    
+    return {
+        "status": "ready",
+        "total_detections": len(firms_api_repo.df),
+        "date_range": {
+            "start": str(firms_api_repo.df['acq_date'].min()) if 'acq_date' in firms_api_repo.df.columns else None,
+            "end": str(firms_api_repo.df['acq_date'].max()) if 'acq_date' in firms_api_repo.df.columns else None
+        },
+        "last_fetch": firms_api_repo._last_fetch.isoformat() if firms_api_repo._last_fetch else None,
+        "data_source": "NASA FIRMS API",
+        "satellites": list(firms_api_repo.df['satellite'].unique()) if 'satellite' in firms_api_repo.df.columns else []
+    }
+
+
+@app.post("/csv/refresh", tags=["csv-fire"])
+async def refresh_fire_data(days: int = 1):
+    """
+    Refresh fire data with recent detections from NASA FIRMS
+    
+    Query params:
+        - days: Number of recent days to fetch (1-10, default: 1)
+    
+    Returns:
+        Status of the refresh operation
+    """
+    if firms_api_repo is None:
+        raise HTTPException(status_code=500, detail="FIRMS API repository not initialized")
+    
+    if days < 1 or days > 10:
+        raise HTTPException(status_code=400, detail="Days must be between 1 and 10")
+    
+    try:
+        firms_api_repo.refresh_data(days=days)
+        
+        # Clear cache after refresh
+        global cache
+        cache = {}
+        
+        return {
+            "status": "success",
+            "message": f"Data refreshed with last {days} days",
+            "total_detections": len(firms_api_repo.df) if firms_api_repo.df is not None else 0,
+            "cache_cleared": True
+        }
+    except Exception as e:
+        logger.error(f"Error refreshing data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh data: {str(e)}")
 
 
 @app.get("/insights/burned-area", tags=["insights"])
